@@ -6,9 +6,10 @@ metadata:
 spec:
   subscriptions:
   - image:
-      repoURL: ghcr.io/akuity/guestbook
+      repoURL: ghcr.io/jdmr-wrkbkmrksonly/guestbook
       imageSelectionStrategy: SemVer
-      allowTags: ^v?[0-9]+\.[0-9]+\.[0-9]+([\+-].*)?$
+      allowTagsRegexes:
+      - ^v?[0-9]+\.[0-9]+\.[0-9]+([\+-].*)?$
   - git:
-      repoURL: https://github.com/akuity/kargo-advanced.git
+      repoURL: https://github.com/jdmr-wrkbkmrksonly/kargo-advanced.git
       branch: main

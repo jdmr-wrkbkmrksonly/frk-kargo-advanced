@@ -44,6 +44,43 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
+  name: perf-test
+  namespace: kargo-advanced
+  annotations:
+    kargo.akuity.io/color: cyan
+spec:
+  requestedFreight:
+  - origin:
+      kind: Warehouse
+      name: guestbook
+    sources:
+      stages:
+      - staging
+  promotionTemplate:
+    spec:
+      steps:
+      - task:
+          name: promote
+  verification:
+    analysisTemplates:
+    - name: locust-perf-test
+    args:
+    - name: host
+      value: http://guestbook.guestbook-perf-test.svc.cluster.local
+    - name: users
+      value: "20"
+    - name: spawnRate
+      value: "5"
+    - name: runTime
+      value: 1m
+    - name: maxFailRatio
+      value: "0.01"
+    - name: maxP95Ms
+      value: "500"
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
   name: ab-test-a
   namespace: kargo-advanced
   annotations:
@@ -55,7 +92,7 @@ spec:
       name: guestbook
     sources:
       stages:
-      - staging
+      - perf-test
   promotionTemplate:
     spec:
       steps:
@@ -82,7 +119,7 @@ spec:
       name: guestbook
     sources:
       stages:
-      - staging
+      - perf-test
   promotionTemplate:
     spec:
       steps:

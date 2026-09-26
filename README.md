@@ -11,6 +11,7 @@ multiple Stages.
 * Stage deploy pipeline with A/B testing
 * Promotion of Git changes and image tags
 * Verification with analysis of an HTTP REST endpoint
+* Verification gate with a Locust.io load test run as a Kubernetes Job
 * Argo CD Application syncing
 * Control flow Stage to coordinate promotion to multiple Stages
 * Rendered branches
@@ -110,7 +111,10 @@ multiple Stages.
 
     To promote, click the target icon to the left of the `dev` Stage, select the
     detected Freight, and click `Yes` to promote. Once promoted, the freight will
-    be qualified to be promoted to downstream Stages (`staging`, `prod`).
+    be qualified to be promoted to downstream Stages (`staging`, `perf-test`,
+    `ab-test-a`/`ab-test-b`, `prod`, and finally `prod-west`/`prod-central`/`prod-east`).
+    Freight can only progress past the `perf-test` Stage once a Locust.io load test,
+    run as a Kubernetes Job, passes its fail-ratio and p95 latency SLOs.
 
 ## Simulating a release
 

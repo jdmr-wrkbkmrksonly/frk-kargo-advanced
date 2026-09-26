@@ -18,3 +18,55 @@ spec:
       web:
         url: https://pokeapi.co/api/v2/pokemon/{{args.pokemon}}
         jsonPath: "{$.base_experience}"
+---
+# Runs a Locust.io load test as a Kubernetes Job against the freshly-deployed
+# guestbook instance, enforcing a max fail-ratio and max p95 latency SLO.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: locust-perf-test
+  namespace: kargo-advanced
+spec:
+  args:
+  - name: host
+  - name: users
+  - name: spawnRate
+  - name: runTime
+  - name: maxFailRatio
+  - name: maxP95Ms
+  metrics:
+  - name: locust-perf-test
+    provider:
+      job:
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+              - name: locust
+                image: locustio/locust:2.31.1
+                command: ["locust"]
+                args:
+                - "-f"
+                - "/locust/locustfile.py"
+                - "--headless"
+                - "--host={{args.host}}"
+                - "-u"
+                - "{{args.users}}"
+                - "-r"
+                - "{{args.spawnRate}}"
+                - "-t"
+                - "{{args.runTime}}"
+                env:
+                - name: MAX_FAIL_RATIO
+                  value: "{{args.maxFailRatio}}"
+                - name: MAX_P95_MS
+                  value: "{{args.maxP95Ms}}"
+                volumeMounts:
+                - name: locustfile
+                  mountPath: /locust
+              volumes:
+              - name: locustfile
+                configMap:
+                  name: locust-perf-test-locustfile
