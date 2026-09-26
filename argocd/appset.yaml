@@ -6,7 +6,7 @@ metadata:
 spec:
   generators:
   - git:
-      repoURL: https://github.com/jdmr-wrkbkmrksonly/kargo-advanced.git
+      repoURL: https://github.com/jdmr-wrkbkmrksonly/frk-kargo-advanced.git
       revision: HEAD
       directories:
       - path: env/*
@@ -24,5 +24,5 @@ spec:
       project: guestbook
       source:
         path: ./
-        repoURL: https://github.com/jdmr-wrkbkmrksonly/kargo-advanced.git
+        repoURL: https://github.com/jdmr-wrkbkmrksonly/frk-kargo-advanced.git
         targetRevision: env/{{path.basename}}

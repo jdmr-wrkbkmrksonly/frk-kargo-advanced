@@ -15,4 +15,4 @@ spec:
   - group: '*'
     kind: '*'
   sourceRepos:
-  - https://github.com/jdmr-wrkbkmrksonly/kargo-advanced.git
+  - https://github.com/jdmr-wrkbkmrksonly/frk-kargo-advanced.git

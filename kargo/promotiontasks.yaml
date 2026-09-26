@@ -6,7 +6,7 @@ metadata:
 spec:
   vars:
   - name: repoURL
-    value: https://github.com/jdmr-wrkbkmrksonly/kargo-advanced.git
+    value: https://github.com/jdmr-wrkbkmrksonly/frk-kargo-advanced.git
   - name: branch
     value: main
   - name: image
