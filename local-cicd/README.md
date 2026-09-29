@@ -35,6 +35,17 @@ USERS=20 SPAWN_RATE=5 RUN_TIME=1m MAX_FAIL_RATIO=0.01 MAX_P95_MS=500 \
   ./verify-perf-gate.sh
 ```
 
+## Viewing AnalysisRun logs
+
+The Kargo UI's "AnalysisRun log streaming is not configured" message is expected here — that
+feature requires an external, HTTP-fetchable log backend (Loki, etc.) that we don't run on this
+disposable cluster. Use `show-analysisrun-logs.sh` instead:
+
+```shell
+./show-analysisrun-logs.sh                # most recently created AnalysisRun
+./show-analysisrun-logs.sh <run-name>      # a specific one
+```
+
 ## Troubleshooting
 
 - **Pods stuck `Pending`**: the default Podman machine has 4GiB RAM, which can be tight for

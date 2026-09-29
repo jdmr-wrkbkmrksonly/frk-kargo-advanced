@@ -1,0 +1,25 @@
+import os
+from locust import HttpUser, task, between, events
+
+MAX_FAIL_RATIO = float(os.environ.get("MAX_FAIL_RATIO", "0.01"))
+MAX_P95_MS = int(os.environ.get("MAX_P95_MS", "500"))
+
+class GuestbookUser(HttpUser):
+    wait_time = between(0.5, 2)
+
+    @task
+    def load_home_page(self):
+        self.client.get("/")
+
+@events.test_stop.add_listener
+def enforce_slo(environment, **kwargs):
+    stats = environment.stats.total
+    fail_ratio = stats.fail_ratio
+    p95 = stats.get_response_time_percentile(0.95)
+
+    print(f"[locust-slo] fail_ratio={fail_ratio:.4f} (max {MAX_FAIL_RATIO}), "
+            f"p95={p95}ms (max {MAX_P95_MS}ms)")
+
+    environment.process_exit_code = (
+        1 if fail_ratio > MAX_FAIL_RATIO or p95 > MAX_P95_MS else 0
+    )

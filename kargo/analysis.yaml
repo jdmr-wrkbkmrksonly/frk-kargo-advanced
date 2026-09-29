@@ -70,3 +70,168 @@ spec:
               - name: locustfile
                 configMap:
                   name: locust-perf-test-locustfile
+---
+# Fetches locustfile.py from a private GitHub repo (raw.githubusercontent.com) via an init
+# container, instead of the in-cluster ConfigMap locust-perf-test uses. Reuses the existing
+# `github-creds` git Credentials Secret (created via `kargo create repo-credentials`) for the
+# token — no new Secret needed.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: locust-perf-test-github
+  namespace: kargo-advanced
+spec:
+  args:
+  - name: host
+  - name: users
+  - name: spawnRate
+  - name: runTime
+  - name: maxFailRatio
+  - name: maxP95Ms
+  - name: githubRepo
+    value: jdmr-wrkbkmrksonly/frk-kargo-advanced
+  - name: githubRef
+    value: main
+  - name: githubPath
+    value: env/perf-test/locustfile.py
+  - name: githubTokenSecret
+    value: github-creds
+  metrics:
+  - name: locust-perf-test-github
+    provider:
+      job:
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              initContainers:
+              - name: fetch-locustfile
+                image: curlimages/curl:8.11.1
+                env:
+                - name: GITHUB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{args.githubTokenSecret}}"
+                      key: password
+                command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  curl -sSfL \
+                    -H "Authorization: token ${GITHUB_TOKEN}" \
+                    "https://raw.githubusercontent.com/{{args.githubRepo}}/{{args.githubRef}}/{{args.githubPath}}" \
+                    -o /locust/locustfile.py
+                volumeMounts:
+                - name: locustfile
+                  mountPath: /locust
+              containers:
+              - name: locust
+                image: locustio/locust:2.31.1
+                command: ["locust"]
+                args:
+                - "-f"
+                - "/locust/locustfile.py"
+                - "--headless"
+                - "--host={{args.host}}"
+                - "-u"
+                - "{{args.users}}"
+                - "-r"
+                - "{{args.spawnRate}}"
+                - "-t"
+                - "{{args.runTime}}"
+                env:
+                - name: MAX_FAIL_RATIO
+                  value: "{{args.maxFailRatio}}"
+                - name: MAX_P95_MS
+                  value: "{{args.maxP95Ms}}"
+                volumeMounts:
+                - name: locustfile
+                  mountPath: /locust
+              volumes:
+              - name: locustfile
+                emptyDir: {}
+---
+# Fetches locustfile.py from a private GCS object via an init container running gsutil, instead
+# of the in-cluster ConfigMap locust-perf-test uses. Requires a Secret holding a GCP
+# service-account JSON key — NOT committed here (never commit real key material). Create it
+# yourself first:
+#   kubectl create secret generic gcs-perf-test-sa-key \
+#     --from-file=key.json=/path/to/your-service-account.json \
+#     -n kargo-advanced
+# The service account needs at least Storage Object Viewer on the bucket/object below.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: locust-perf-test-gcs
+  namespace: kargo-advanced
+spec:
+  args:
+  - name: host
+  - name: users
+  - name: spawnRate
+  - name: runTime
+  - name: maxFailRatio
+  - name: maxP95Ms
+  - name: gcsObjectUrl
+    value: gs://pplus-perf-test-bucket/perf-tests/locustfile.py
+  - name: gcsCredentialsSecret
+    value: gcs-perf-test-sa-key
+  metrics:
+  - name: locust-perf-test-gcs
+    provider:
+      job:
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              initContainers:
+              - name: fetch-locustfile
+                image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+                env:
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: /var/secrets/google/key.json
+                command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+                  gsutil cp "{{args.gcsObjectUrl}}" /locust/locustfile.py
+                volumeMounts:
+                - name: gcs-key
+                  mountPath: /var/secrets/google
+                  readOnly: true
+                - name: locustfile
+                  mountPath: /locust
+              containers:
+              - name: locust
+                image: locustio/locust:2.31.1
+                command: ["locust"]
+                args:
+                - "-f"
+                - "/locust/locustfile.py"
+                - "--headless"
+                - "--host={{args.host}}"
+                - "-u"
+                - "{{args.users}}"
+                - "-r"
+                - "{{args.spawnRate}}"
+                - "-t"
+                - "{{args.runTime}}"
+                env:
+                - name: MAX_FAIL_RATIO
+                  value: "{{args.maxFailRatio}}"
+                - name: MAX_P95_MS
+                  value: "{{args.maxP95Ms}}"
+                volumeMounts:
+                - name: locustfile
+                  mountPath: /locust
+              volumes:
+              - name: gcs-key
+                secret:
+                  secretName: "{{args.gcsCredentialsSecret}}"
+              - name: locustfile
+                emptyDir: {}

@@ -64,6 +64,8 @@ spec:
   verification:
     analysisTemplates:
     - name: locust-perf-test
+    - name: locust-perf-test-github
+    # - name: locust-perf-test-gcs
     args:
     - name: host
       value: http://guestbook.guestbook-perf-test.svc.cluster.local
@@ -77,6 +79,18 @@ spec:
       value: "0.01"
     - name: maxP95Ms
       value: "500"
+    - name: githubRepo
+      value: jdmr-wrkbkmrksonly/frk-kargo-advanced
+    - name: githubRef
+      value: main
+    - name: githubPath
+      value: env/perf-test/locustfile.py
+    - name: githubTokenSecret
+      value: github-creds
+    - name: gcsObjectUrl
+      value: gs://pplus-perf-test-bucket/perf-tests/locustfile.py
+    - name: gcsCredentialsSecret
+      value: gcs-perf-test-sa-key
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
