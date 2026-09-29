@@ -31,9 +31,13 @@ cd local-cicd
 
 ```shell
 HOST=http://guestbook.guestbook-perf-test.svc.cluster.local \
-USERS=20 SPAWN_RATE=5 RUN_TIME=1m MAX_FAIL_RATIO=0.01 MAX_P95_MS=500 \
+USERS=20 SPAWN_RATE=5 RUN_TIME=1m ENFORCE_SLO=true \
   ./verify-perf-gate.sh
 ```
+
+Note: per-endpoint thresholds (latency, RPS, error rate) now live in `env/perf-test/config.yaml`,
+not in args/env vars — edit that file to change what's actually being gated on. `ENFORCE_SLO=false`
+is a global override that makes the whole run advisory-only regardless of what `config.yaml` says.
 
 ## Viewing AnalysisRun logs
 
@@ -45,6 +49,33 @@ disposable cluster. Use `show-analysisrun-logs.sh` instead:
 ./show-analysisrun-logs.sh                # most recently created AnalysisRun
 ./show-analysisrun-logs.sh <run-name>      # a specific one
 ```
+
+## Promoting real Freight through the Kargo UI/CLI (optional)
+
+Beyond `verify-perf-gate.sh`, you can also drive a real Promotion through `dev` → `staging` →
+`perf-test` from the Kargo UI/CLI. Two things to set up first, since this cluster has no Argo CD:
+
+1. **Git credentials**, so the `git-push` step can authenticate against your fork:
+   ```shell
+   kargo create repo-credentials github-creds \
+     --project=kargo-advanced \
+     --git \
+     --repo-url=<your fork's .git URL> \
+     --username=<your github username>
+     # omit --password so it prompts interactively instead of landing in shell history
+   ```
+2. **Strip `argocd-update` from the `promote` PromotionTask** — `setup.sh` already runs this for
+   you (via `disable-argocd-update.sh`), but it needs re-running every time your fork's
+   `kargo/promotiontasks.yaml` gets re-applied (which restores `argocd-update` and will start
+   failing promotions again, since there's no real Argo CD here to satisfy it). Use `sync-fork.sh`
+   after every `git push` instead of remembering both steps:
+   ```shell
+   ./sync-fork.sh   # kubectl apply -f <fork>/kargo, then re-run disable-argocd-update.sh
+   ```
+   Defaults to `FORK_DIR=/Users/jose.morales/Workspaces/Prsnl/ArgoCDProjects/kargo/frk-kargo-advanced`;
+   override with `FORK_DIR=/path/to/your/fork ./sync-fork.sh` if that ever changes. This — like
+   `disable-argocd-update.sh` — only patches the live cluster; it never touches any committed
+   `kargo/promotiontasks.yaml`, so production (which needs `argocd-update`) is unaffected.
 
 ## Troubleshooting
 

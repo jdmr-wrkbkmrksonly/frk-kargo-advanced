@@ -13,13 +13,15 @@ HOST="${HOST:-http://guestbook.guestbook-perf-test.svc.cluster.local}"
 USERS="${USERS:-20}"
 SPAWN_RATE="${SPAWN_RATE:-5}"
 RUN_TIME="${RUN_TIME:-1m}"
-MAX_FAIL_RATIO="${MAX_FAIL_RATIO:-0.01}"
-MAX_P95_MS="${MAX_P95_MS:-500}"
+ENFORCE_SLO="${ENFORCE_SLO:-true}"
 TIMEOUT_SECS="${TIMEOUT_SECS:-180}"
 
 if [[ "${1:-}" == "--fail-scenario" ]]; then
-  echo "==> --fail-scenario: forcing an unachievable p95 threshold to prove the gate fails closed"
-  MAX_P95_MS=1
+  # Thresholds now live in config.yaml, not in args, so there's no arg left to tweak to force a
+  # breach. Point at a wrong port instead -- every request fails outright, which reliably
+  # breaches the aggregate sla.error_rate_pct regardless of what config.yaml's numbers are.
+  echo "==> --fail-scenario: pointing at a bad host so every request fails, to prove the gate fails closed"
+  HOST="http://guestbook.guestbook-perf-test.svc.cluster.local:9"
 fi
 
 if ! kubectl get analysistemplate "$TEMPLATE" -n "$NAMESPACE" >/dev/null 2>&1; then
@@ -29,7 +31,7 @@ fi
 
 RUN_NAME="locust-perf-test-manual-$(date +%s)"
 
-echo "==> Creating AnalysisRun '$RUN_NAME' (host=$HOST users=$USERS spawnRate=$SPAWN_RATE runTime=$RUN_TIME maxFailRatio=$MAX_FAIL_RATIO maxP95Ms=$MAX_P95_MS)"
+echo "==> Creating AnalysisRun '$RUN_NAME' (host=$HOST users=$USERS spawnRate=$SPAWN_RATE runTime=$RUN_TIME enforceSlo=$ENFORCE_SLO)"
 
 kubectl get analysistemplate "$TEMPLATE" -n "$NAMESPACE" -o json | jq \
   --arg name "$RUN_NAME" \
@@ -38,8 +40,7 @@ kubectl get analysistemplate "$TEMPLATE" -n "$NAMESPACE" -o json | jq \
   --arg users "$USERS" \
   --arg spawnRate "$SPAWN_RATE" \
   --arg runTime "$RUN_TIME" \
-  --arg maxFailRatio "$MAX_FAIL_RATIO" \
-  --arg maxP95Ms "$MAX_P95_MS" \
+  --arg enforceSlo "$ENFORCE_SLO" \
   '{
     apiVersion: "argoproj.io/v1alpha1",
     kind: "AnalysisRun",
@@ -50,8 +51,7 @@ kubectl get analysistemplate "$TEMPLATE" -n "$NAMESPACE" -o json | jq \
         { name: "users", value: $users },
         { name: "spawnRate", value: $spawnRate },
         { name: "runTime", value: $runTime },
-        { name: "maxFailRatio", value: $maxFailRatio },
-        { name: "maxP95Ms", value: $maxP95Ms }
+        { name: "enforceSlo", value: $enforceSlo }
       ],
       metrics: .spec.metrics
     }

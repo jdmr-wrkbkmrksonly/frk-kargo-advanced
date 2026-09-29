@@ -88,12 +88,19 @@ echo "==> Deploying guestbook directly into guestbook-perf-test (bypassing Argo 
 kubectl apply -k "$REPO_ROOT/env/perf-test"
 kubectl -n guestbook-perf-test wait --for=condition=Available --timeout=180s deployment/guestbook
 
+echo "==> Stripping argocd-update from the 'promote' PromotionTask (no real Argo CD here — see"
+echo "    disable-argocd-update.sh; this patches the live cluster object only, never the repo file)"
+"$SCRIPT_DIR/disable-argocd-update.sh"
+
 cat <<EOF
 
 ==> Setup complete.
 
 Next steps:
-  ./verify-perf-gate.sh                  # run the Locust perf gate (expect PASS)
+  ./verify-perf-gate.sh                  # run the Locust perf gate directly (expect PASS)
   ./verify-perf-gate.sh --fail-scenario  # force an impossible SLO (expect FAIL)
+  # Or promote real Freight through the Kargo UI/CLI (dev -> staging -> perf-test) — promotions
+  # will git-clone/commit/push (make sure repo-credentials are set up for your fork) and stop
+  # after git-push, since argocd-update was stripped above.
   ./teardown.sh                          # delete the cluster when done
 EOF
