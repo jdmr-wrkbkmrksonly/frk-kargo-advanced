@@ -63,7 +63,7 @@ spec:
           name: promote
   verification:
     analysisTemplates:
-    - name: locust-perf-test
+    # - name: locust-perf-test
     - name: locust-perf-test-github
     # - name: locust-perf-test-gcs
     args:
