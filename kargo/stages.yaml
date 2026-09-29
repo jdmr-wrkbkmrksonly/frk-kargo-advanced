@@ -75,20 +75,22 @@ spec:
       value: "5"
     - name: runTime
       value: 1m
-    - name: maxFailRatio
-      value: "0.01"
-    - name: maxP95Ms
-      value: "500"
+    - name: enforceSlo
+      value: "true"
     - name: githubRepo
       value: jdmr-wrkbkmrksonly/frk-kargo-advanced
     - name: githubRef
       value: main
     - name: githubPath
       value: env/perf-test/locustfile.py
+    - name: githubConfigPath
+      value: env/perf-test/config.yaml
     - name: githubTokenSecret
       value: github-creds
     - name: gcsObjectUrl
       value: gs://pplus-perf-test-bucket/perf-tests/locustfile.py
+    - name: gcsConfigObjectUrl
+      value: gs://pplus-perf-test-bucket/perf-tests/config.yaml
     - name: gcsCredentialsSecret
       value: gcs-perf-test-sa-key
 ---

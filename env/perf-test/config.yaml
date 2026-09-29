@@ -1,0 +1,31 @@
+# Locust performance-test configuration for the generic locustfile.py (see that file for how
+# this is consumed). Modeled on identity-service/perf/config.yaml's shape, adapted for
+# guestbook's single "/" endpoint.
+#
+# Gating: by default, any endpoint below with `threshold: true` that breaches its
+# expected_latency_ms/expected_rps, plus the aggregate sla.error_rate_pct, fails the run (Kargo
+# verification gate fails closed). Set `threshold: false` on an endpoint to measure/report it
+# without gating on it. To make the ENTIRE run advisory-only, set the ENFORCE_SLO env var to
+# "false" (default "true") -- no config edit needed.
+
+sla:
+  error_rate_pct: 1.0   # aggregate max allowed failure percentage across all endpoints
+
+common:
+  headers:
+    X-AutomationTest: "true"
+    Accept: "application/json"
+    User-Automation-Platform: "P+ Performance Engineering - Locust"
+    Automation-Session-ID: "fd78bf36753f14d948a8f9cbb129730126ac0d917c4343e1c92456479d0f80cc"
+    User-Agent: "locust/${LOCUST_VERSION}"
+  wait_time_min_s: 0.5
+  wait_time_max_s: 2
+
+endpoints:
+- name: home
+  method: GET
+  path: /
+  weight: 1
+  expected_latency_ms: 500   # p95 threshold (ms)
+  threshold: true            # counts toward the gate; set false to measure only
+  expected_rps: 5            # minimum achieved RPS expected (see locustfile.py caveat)

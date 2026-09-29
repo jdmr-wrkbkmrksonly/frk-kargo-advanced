@@ -5,28 +5,169 @@ metadata:
   namespace: kargo-advanced
 data:
   locustfile.py: |
+    import json
     import os
-    from locust import HttpUser, task, between, events
+    from string import Template
 
-    MAX_FAIL_RATIO = float(os.environ.get("MAX_FAIL_RATIO", "0.01"))
-    MAX_P95_MS = int(os.environ.get("MAX_P95_MS", "500"))
+    from locust import HttpUser, between, events
 
-    class GuestbookUser(HttpUser):
-        wait_time = between(0.5, 2)
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
 
-        @task
-        def load_home_page(self):
-            self.client.get("/")
+    CONFIG_PATH = os.environ.get("LOCUST_CONFIG_PATH", "/locust/config.yaml")
+    ENFORCE_SLO = os.environ.get("ENFORCE_SLO", "true").strip().lower() not in ("false", "0", "no")
+
+
+    def _load_config(path):
+        with open(path) as f:
+            raw = f.read()
+        if path.endswith((".yaml", ".yml")):
+            if yaml is None:
+                raise RuntimeError(f"PyYAML is required to parse {path} but is not installed")
+            return yaml.safe_load(raw)
+        return json.loads(raw)
+
+
+    def _resolve(value):
+        """Recursively resolve ${VAR}/$VAR placeholders against environment variables."""
+        if isinstance(value, str):
+            return Template(value).safe_substitute(os.environ)
+        if isinstance(value, dict):
+            return {k: _resolve(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_resolve(v) for v in value]
+        return value
+
+
+    CONFIG = _resolve(_load_config(CONFIG_PATH))
+    COMMON = CONFIG.get("common", {})
+    COMMON_HEADERS = COMMON.get("headers", {})
+    SLA = CONFIG.get("sla", {})
+    ENDPOINTS = CONFIG.get("endpoints") or []
+
+    if not ENDPOINTS:
+        raise RuntimeError(f"No endpoints defined in {CONFIG_PATH}")
+
+
+    def _make_task(endpoint):
+        name = endpoint["name"]
+        method = endpoint.get("method", "GET").upper()
+        path = endpoint["path"]
+        headers = {**COMMON_HEADERS, **endpoint.get("headers", {})}
+        params = endpoint.get("params")
+        body = endpoint.get("body")
+
+        def task_fn(self):
+            self.client.request(
+                method, path, name=name, headers=headers or None,
+                params=params, json=body if body else None,
+            )
+
+        task_fn.__name__ = f"task_{name}"
+        return task_fn
+
+
+    # Built BEFORE the class body runs, then assigned as a single {task_fn: weight} dict (Locust's
+    # documented form for weighted tasks). NOTE: this must be fully built first -- Locust's
+    # TaskSetMeta metaclass converts `tasks` into its internal representation once, at class
+    # definition time, based on whatever it finds in the class body right then. Declaring `tasks = {}`
+    # empty and mutating it afterward gets silently baked in as empty (or worse, coerced to a list,
+    # breaking dict-style mutation entirely) -- there's no reliable way to add tasks after the fact.
+    _TASKS = {_make_task(_endpoint): int(_endpoint.get("weight", 1)) for _endpoint in ENDPOINTS}
+
+
+    class GenericUser(HttpUser):
+        wait_time = between(
+            float(COMMON.get("wait_time_min_s", 1)),
+            float(COMMON.get("wait_time_max_s", 3)),
+        )
+        tasks = _TASKS
+
 
     @events.test_stop.add_listener
     def enforce_slo(environment, **kwargs):
-        stats = environment.stats.total
-        fail_ratio = stats.fail_ratio
-        p95 = stats.get_response_time_percentile(0.95)
+        stats = environment.stats
+        total = stats.total
+        breaches = []
 
-        print(f"[locust-slo] fail_ratio={fail_ratio:.4f} (max {MAX_FAIL_RATIO}), "
-              f"p95={p95}ms (max {MAX_P95_MS}ms)")
+        error_rate_pct = total.fail_ratio * 100
+        max_error_rate_pct = SLA.get("error_rate_pct")
+        if max_error_rate_pct is not None and error_rate_pct > max_error_rate_pct:
+            breaches.append(
+                f"aggregate error_rate={error_rate_pct:.2f}% > sla.error_rate_pct={max_error_rate_pct}%"
+            )
 
-        environment.process_exit_code = (
-            1 if fail_ratio > MAX_FAIL_RATIO or p95 > MAX_P95_MS else 0
-        )
+        for endpoint in ENDPOINTS:
+            name = endpoint["name"]
+            method = endpoint.get("method", "GET").upper()
+            entry = stats.entries.get((name, method))
+
+            if entry is None or entry.num_requests == 0:
+                print(f"[locust-slo] endpoint '{name}': no requests recorded")
+                breaches.append(f"endpoint '{name}': no requests recorded")
+                continue
+
+            gated = endpoint.get("threshold", True)
+            endpoint_breaches = []
+
+            expected_latency_ms = endpoint.get("expected_latency_ms")
+            if expected_latency_ms is not None:
+                p95 = entry.get_response_time_percentile(0.95)
+                if p95 > expected_latency_ms:
+                    endpoint_breaches.append(f"p95={p95:.0f}ms > expected_latency_ms={expected_latency_ms}")
+
+            # expected_rps is a MINIMUM achieved-RPS check -- only meaningful if the Locust load
+            # (users/spawnRate) is high enough to actually reach that rate; otherwise this tests your
+            # own load parameters, not the service.
+            expected_rps = endpoint.get("expected_rps")
+            if expected_rps is not None and entry.total_rps < expected_rps:
+                endpoint_breaches.append(f"rps={entry.total_rps:.1f} < expected_rps={expected_rps}")
+
+            status = "gated" if gated else "advisory"
+            for b in endpoint_breaches:
+                print(f"[locust-slo] endpoint '{name}' ({status}) breach: {b}")
+            if gated:
+                breaches.extend(f"endpoint '{name}': {b}" for b in endpoint_breaches)
+
+        if breaches:
+            print(f"[locust-slo] {len(breaches)} gating breach(es):")
+            for b in breaches:
+                print(f"  - {b}")
+        else:
+            print("[locust-slo] all gated SLOs satisfied")
+
+        if not ENFORCE_SLO:
+            print("[locust-slo] ENFORCE_SLO=false -- advisory mode, exiting 0 regardless of breaches")
+            environment.process_exit_code = 0
+        else:
+            environment.process_exit_code = 1 if breaches else 0
+  config.yaml: |
+    # Locust performance-test configuration for the generic locustfile.py (see that file for how
+    # this is consumed). Modeled on identity-service/perf/config.yaml's shape, adapted for
+    # guestbook's single "/" endpoint.
+    #
+    # Gating: by default, any endpoint below with `threshold: true` that breaches its
+    # expected_latency_ms/expected_rps, plus the aggregate sla.error_rate_pct, fails the run
+    # (Kargo verification gate fails closed). Set `threshold: false` on an endpoint to
+    # measure/report it without gating on it. To make the ENTIRE run advisory-only, set the
+    # ENFORCE_SLO env var to "false" (default "true") -- no config edit needed.
+
+    sla:
+      error_rate_pct: 1.0   # aggregate max allowed failure percentage across all endpoints
+
+    common:
+      headers:
+        Accept: "text/html"
+      wait_time_min_s: 0.5
+      wait_time_max_s: 2
+
+    endpoints:
+    - name: home
+      method: GET
+      path: /
+      weight: 1
+      expected_latency_ms: 500   # p95 threshold (ms)
+      threshold: true            # counts toward the gate; set false to measure only
+      expected_rps: 5            # minimum achieved RPS expected (see locustfile.py caveat)

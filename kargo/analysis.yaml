@@ -19,8 +19,12 @@ spec:
         url: https://pokeapi.co/api/v2/pokemon/{{args.pokemon}}
         jsonPath: "{$.base_experience}"
 ---
-# Runs a Locust.io load test as a Kubernetes Job against the freshly-deployed
-# guestbook instance, enforcing a max fail-ratio and max p95 latency SLO.
+# Runs a Locust.io load test as a Kubernetes Job against the freshly-deployed guestbook instance.
+# The generic locustfile.py builds its tasks and SLOs entirely from config.yaml (mounted
+# alongside it, same ConfigMap) -- see that file for the endpoint/threshold schema. enforceSlo
+# (default "true") is a global escape hatch: set to "false" to make the whole run advisory-only
+# regardless of what config.yaml says (per-endpoint `threshold: false` in config.yaml is the
+# scoped equivalent, for exempting just one endpoint from gating).
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
@@ -32,8 +36,8 @@ spec:
   - name: users
   - name: spawnRate
   - name: runTime
-  - name: maxFailRatio
-  - name: maxP95Ms
+  - name: enforceSlo
+    value: "true"
   metrics:
   - name: locust-perf-test
     provider:
@@ -46,23 +50,19 @@ spec:
               containers:
               - name: locust
                 image: locustio/locust:2.31.1
-                command: ["locust"]
+                command: ["sh", "-c"]
                 args:
-                - "-f"
-                - "/locust/locustfile.py"
-                - "--headless"
-                - "--host={{args.host}}"
-                - "-u"
-                - "{{args.users}}"
-                - "-r"
-                - "{{args.spawnRate}}"
-                - "-t"
-                - "{{args.runTime}}"
+                - |
+                  set -eu
+                  pip install --quiet --disable-pip-version-check pyyaml
+                  exec locust -f /locust/locustfile.py --headless \
+                    --host="{{args.host}}" \
+                    -u "{{args.users}}" \
+                    -r "{{args.spawnRate}}" \
+                    -t "{{args.runTime}}"
                 env:
-                - name: MAX_FAIL_RATIO
-                  value: "{{args.maxFailRatio}}"
-                - name: MAX_P95_MS
-                  value: "{{args.maxP95Ms}}"
+                - name: ENFORCE_SLO
+                  value: "{{args.enforceSlo}}"
                 volumeMounts:
                 - name: locustfile
                   mountPath: /locust
@@ -71,10 +71,10 @@ spec:
                 configMap:
                   name: locust-perf-test-locustfile
 ---
-# Fetches locustfile.py from a private GitHub repo (raw.githubusercontent.com) via an init
-# container, instead of the in-cluster ConfigMap locust-perf-test uses. Reuses the existing
-# `github-creds` git Credentials Secret (created via `kargo create repo-credentials`) for the
-# token — no new Secret needed.
+# Fetches locustfile.py AND config.yaml from a private GitHub repo (raw.githubusercontent.com)
+# via an init container, instead of the in-cluster ConfigMap locust-perf-test uses. Reuses the
+# existing `github-creds` git Credentials Secret (created via `kargo create repo-credentials`)
+# for the token — no new Secret needed.
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
@@ -86,14 +86,16 @@ spec:
   - name: users
   - name: spawnRate
   - name: runTime
-  - name: maxFailRatio
-  - name: maxP95Ms
+  - name: enforceSlo
+    value: "true"
   - name: githubRepo
     value: jdmr-wrkbkmrksonly/frk-kargo-advanced
   - name: githubRef
     value: main
   - name: githubPath
     value: env/perf-test/locustfile.py
+  - name: githubConfigPath
+    value: env/perf-test/config.yaml
   - name: githubTokenSecret
     value: github-creds
   metrics:
@@ -123,29 +125,29 @@ spec:
                     -H "Authorization: token ${GITHUB_TOKEN}" \
                     "https://raw.githubusercontent.com/{{args.githubRepo}}/{{args.githubRef}}/{{args.githubPath}}" \
                     -o /locust/locustfile.py
+                  curl -sSfL \
+                    -H "Authorization: token ${GITHUB_TOKEN}" \
+                    "https://raw.githubusercontent.com/{{args.githubRepo}}/{{args.githubRef}}/{{args.githubConfigPath}}" \
+                    -o /locust/config.yaml
                 volumeMounts:
                 - name: locustfile
                   mountPath: /locust
               containers:
               - name: locust
                 image: locustio/locust:2.31.1
-                command: ["locust"]
+                command: ["sh", "-c"]
                 args:
-                - "-f"
-                - "/locust/locustfile.py"
-                - "--headless"
-                - "--host={{args.host}}"
-                - "-u"
-                - "{{args.users}}"
-                - "-r"
-                - "{{args.spawnRate}}"
-                - "-t"
-                - "{{args.runTime}}"
+                - |
+                  set -eu
+                  pip install --quiet --disable-pip-version-check pyyaml
+                  exec locust -f /locust/locustfile.py --headless \
+                    --host="{{args.host}}" \
+                    -u "{{args.users}}" \
+                    -r "{{args.spawnRate}}" \
+                    -t "{{args.runTime}}"
                 env:
-                - name: MAX_FAIL_RATIO
-                  value: "{{args.maxFailRatio}}"
-                - name: MAX_P95_MS
-                  value: "{{args.maxP95Ms}}"
+                - name: ENFORCE_SLO
+                  value: "{{args.enforceSlo}}"
                 volumeMounts:
                 - name: locustfile
                   mountPath: /locust
@@ -153,14 +155,14 @@ spec:
               - name: locustfile
                 emptyDir: {}
 ---
-# Fetches locustfile.py from a private GCS object via an init container running gsutil, instead
-# of the in-cluster ConfigMap locust-perf-test uses. Requires a Secret holding a GCP
-# service-account JSON key — NOT committed here (never commit real key material). Create it
+# Fetches locustfile.py AND config.yaml from a private GCS bucket via an init container running
+# gsutil, instead of the in-cluster ConfigMap locust-perf-test uses. Requires a Secret holding a
+# GCP service-account JSON key — NOT committed here (never commit real key material). Create it
 # yourself first:
 #   kubectl create secret generic gcs-perf-test-sa-key \
 #     --from-file=key.json=/path/to/your-service-account.json \
 #     -n kargo-advanced
-# The service account needs at least Storage Object Viewer on the bucket/object below.
+# The service account needs at least Storage Object Viewer on the bucket/objects below.
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
@@ -172,10 +174,12 @@ spec:
   - name: users
   - name: spawnRate
   - name: runTime
-  - name: maxFailRatio
-  - name: maxP95Ms
+  - name: enforceSlo
+    value: "true"
   - name: gcsObjectUrl
     value: gs://pplus-perf-test-bucket/perf-tests/locustfile.py
+  - name: gcsConfigObjectUrl
+    value: gs://pplus-perf-test-bucket/perf-tests/config.yaml
   - name: gcsCredentialsSecret
     value: gcs-perf-test-sa-key
   metrics:
@@ -200,6 +204,7 @@ spec:
                   set -eu
                   gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
                   gsutil cp "{{args.gcsObjectUrl}}" /locust/locustfile.py
+                  gsutil cp "{{args.gcsConfigObjectUrl}}" /locust/config.yaml
                 volumeMounts:
                 - name: gcs-key
                   mountPath: /var/secrets/google
@@ -209,23 +214,19 @@ spec:
               containers:
               - name: locust
                 image: locustio/locust:2.31.1
-                command: ["locust"]
+                command: ["sh", "-c"]
                 args:
-                - "-f"
-                - "/locust/locustfile.py"
-                - "--headless"
-                - "--host={{args.host}}"
-                - "-u"
-                - "{{args.users}}"
-                - "-r"
-                - "{{args.spawnRate}}"
-                - "-t"
-                - "{{args.runTime}}"
+                - |
+                  set -eu
+                  pip install --quiet --disable-pip-version-check pyyaml
+                  exec locust -f /locust/locustfile.py --headless \
+                    --host="{{args.host}}" \
+                    -u "{{args.users}}" \
+                    -r "{{args.spawnRate}}" \
+                    -t "{{args.runTime}}"
                 env:
-                - name: MAX_FAIL_RATIO
-                  value: "{{args.maxFailRatio}}"
-                - name: MAX_P95_MS
-                  value: "{{args.maxP95Ms}}"
+                - name: ENFORCE_SLO
+                  value: "{{args.enforceSlo}}"
                 volumeMounts:
                 - name: locustfile
                   mountPath: /locust
